@@ -1,0 +1,51 @@
+[project]
+name = "t1-datahack"
+version = "0.1.0"
+description = "Hybrid AI system for medical literature classification"
+authors = [
+    { name = "Jhojan Ropero", email = "jhojanropero0@gmail.com" },
+    { name = "Julian Pico", email = "julpic08@gmail.com" },
+    { name = "Mateo Correa", email = "teoszn8855@gmail.com" },
+]
+license = { file = "LICENSE" }
+readme = "README.md"
+requires-python = ">=3.12"
+keywords = ["machine-learning", "medical-ai", "nlp", "classification"]
+
+dependencies = [
+    "anthropic>=0.64.0",
+    "datasets>=4.0.0",
+    "matplotlib>=3.10.5",
+    "mypy>=1.17.1",
+    "nltk>=3.9.1",
+    "numpy>=2.3.2",
+    "pandas>=2.3.2",
+    "plotly>=6.3.0",
+    "python-dotenv>=1.1.1",
+    "pyyaml>=6.0.2",
+    "scikit-learn>=1.7.1",
+    "seaborn>=0.13.2",
+    "spacy>=3.8.7",
+    "tokenizers>=0.21.4",
+    "torch>=2.8.0",
+    "tqdm>=4.67.1",
+    "transformers>=4.55.4",
+]
+
+[dependency-groups]
+dev = [
+    "ipykernel>=6.30.1",
+    "jupyter>=1.1.1",
+    "notebook>=7.4.5",
+    "pytest>=8.4.1",
+    "pytest-cov>=6.2.1",
+    "ruff>=0.12.10",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "UP"]
+ignore = ["E501"]
