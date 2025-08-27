@@ -1,289 +1,302 @@
-"""
-Clasificador LLM mejorado con Gemini para casos complejos
-"""
-import asyncio
-import random
+import json
+import os
 import time
 from typing import Any
 
 import google.generativeai as genai
-from tenacity import retry, stop_after_attempt, wait_exponential
+from dotenv import load_dotenv
 
-from core import get_logger, settings
+# Cargar variables de entorno
+load_dotenv()
 
-logger = get_logger("llm_classifier")
+class MedicalLLMClassifier:
+    """Clasificador LLM usando Gemini REAL"""
+    def __init__(self, api_key=None):
+        self.api_key = api_key or os.getenv('GEMINI_API_KEY')
+        self.label_names = ['cardiovascular', 'hepatorenal', 'neurological', 'oncological']
+        self.request_count = 0
+        self.max_requests = 10  # Límite para demo
+        self.model = None
 
-
-class LLMClassifierEnhanced:
-    """Clasificador LLM con Gemini para análisis profundo de textos médicos"""
-
-    def __init__(self):
-        self.model_name = settings.gemini_model
-        self.medical_domains = ['cardiovascular', 'neurological', 'oncological', 'hepatorenal']
-
-        # Configurar Gemini API
-        if settings.gemini_api_key:
-            genai.configure(api_key=settings.gemini_api_key)
-            self.client = genai.GenerativeModel(self.model_name)
-            self.api_available = True
-            logger.info("Gemini API configurada correctamente")
+        if self.api_key:
+            try:
+                genai.configure(api_key=self.api_key)
+                self.model = genai.GenerativeModel('gemini-1.5-flash')  # Modelo más rápido
+                self.mode = 'real'
+                print("🤖 LLM Gemini REAL inicializado exitosamente")
+                print(f"🔑 API Key configurada: ...{self.api_key[-4:]}")
+            except Exception as e:
+                print(f"❌ Error configurando Gemini: {e}")
+                self.mode = 'simulated'
         else:
-            self.client = None
-            self.api_available = False
-            logger.warning("Gemini API key no configurada, usando simulación")
+            self.mode = 'simulated'
+            print("⚠️ No se encontró GEMINI_API_KEY, usando modo simulado")
 
-    def create_classification_prompt(self, title: str, abstract: str) -> str:
-        """Crear prompt optimizado para clasificación médica"""
+    def classify_complex_case(self, title: str, abstract: str) -> dict[str, Any]:
+        """Clasificar caso complejo usando Gemini REAL"""
+
+        if self.request_count >= self.max_requests:
+            print(f"⚠️ Límite de {self.max_requests} peticiones alcanzado")
+            return self._default_prediction()
+
+        self.request_count += 1
+        print(f"🤖 Procesando caso {self.request_count}/{self.max_requests} con Gemini...")
+
+        if self.mode == 'real' and self.model:
+            return self._classify_with_gemini_real(title, abstract)
+        else:
+            print("⚠️ Fallback a modo simulado")
+            return self._classify_simulated(title, abstract)
+
+    def _classify_with_gemini_real(self, title: str, abstract: str) -> dict[str, Any]:
+        """Clasificación REAL con Gemini"""
+
         prompt = f"""
-Como experto en literatura médica, analiza el siguiente artículo y clasifícalo en uno o más dominios médicos.
+Eres un especialista médico experto en clasificación de literatura científica. Analiza cuidadosamente el siguiente artículo médico y clasifícalo en una o más categorías.
 
-ARTÍCULO:
+CATEGORÍAS DISPONIBLES:
+• cardiovascular: Enfermedades del corazón, vasos sanguíneos, hipertensión, aterosclerosis, infarto
+• hepatorenal: Enfermedades del hígado, riñones, insuficiencia renal/hepática, trasplantes
+• neurological: Enfermedades del sistema nervioso, cerebro, demencia, epilepsia, neurodegenerativas
+• oncological: Cáncer, tumores, oncología, quimioterapia, radioterapia
+
+ARTÍCULO A ANALIZAR:
 Título: {title}
-Abstract: {abstract}
 
-DOMINIOS DISPONIBLES:
-1. cardiovascular: Relacionado con corazón, sistema circulatorio, presión arterial, arterias, etc.
-2. neurological: Relacionado con cerebro, sistema nervioso, cognición, enfermedades neurodegenerativas, etc.
-3. oncological: Relacionado con cáncer, tumores, quimioterapia, radioterapia, oncología, etc.
-4. hepatorenal: Relacionado con hígado, riñones, función hepática, función renal, diálisis, etc.
+Resumen: {abstract}
 
 INSTRUCCIONES:
-1. Analiza cuidadosamente el contenido médico
-2. Identifica los dominios más relevantes (puede ser más de uno)
-3. Asigna un score de confianza (0.0-1.0) para cada dominio
-4. Considera términos médicos específicos, contexto clínico y temática principal
+1. Lee cuidadosamente el título y resumen
+2. Identifica las especialidades médicas relevantes
+3. Asigna true/false para cada categoría
+4. Un artículo puede pertenecer a múltiples categorías
+5. Proporciona una confianza entre 0.0 y 1.0
 
-FORMATO DE RESPUESTA (JSON estricto):
+Responde ÚNICAMENTE con un JSON válido en este formato exacto:
 {{
-    "domains": ["dominio1", "dominio2"],
-    "confidence_scores": {{
-        "cardiovascular": 0.0,
-        "neurological": 0.0,
-        "oncological": 0.0,
-        "hepatorenal": 0.0
-    }},
-    "reasoning": "Breve explicación de la clasificación",
-    "key_terms": ["término1", "término2", "término3"]
+    "cardiovascular": true,
+    "hepatorenal": false,
+    "neurological": false,
+    "oncological": true,
+    "confidence": 0.92,
+    "reasoning": "El artículo trata sobre cardiooncología, combinando aspectos cardiovasculares y oncológicos"
 }}
-
-Responde ÚNICAMENTE con el JSON, sin texto adicional.
 """
-        return prompt
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
-    async def classify_with_gemini(self, title: str, abstract: str) -> dict[str, Any]:
-        """Clasificar usando Gemini API con reintentos"""
         try:
-            prompt = self.create_classification_prompt(title, abstract)
+            # Realizar petición a Gemini con retry
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    print(f"🔄 Intento {attempt + 1}/{max_retries} - Consultando Gemini...")
 
-            response = await asyncio.to_thread(
-                self.client.generate_content,
-                prompt,
-                generation_config=genai.types.GenerationConfig(
-                    temperature=0.1,
-                    max_output_tokens=500,
-                    candidate_count=1
-                )
-            )
+                    response = self.model.generate_content(
+                        prompt,
+                        generation_config=genai.types.GenerationConfig(
+                            temperature=0.1,  # Baja temperatura para respuestas más consistentes
+                            max_output_tokens=500,
+                        )
+                    )
 
-            # Parsear respuesta JSON
-            import json
-            result = json.loads(response.text.strip())
+                    if not response.text:
+                        raise ValueError("Respuesta vacía de Gemini")
 
-            # Validar estructura
-            required_keys = ['domains', 'confidence_scores', 'reasoning', 'key_terms']
+                    # Procesar respuesta
+                    response_text = response.text.strip()
+                    print(f"📝 Respuesta Gemini: {response_text[:100]}...")
+
+                    # Extraer JSON
+                    json_result = self._extract_json_from_response(response_text)
+
+                    if json_result:
+                        print("✅ Respuesta JSON válida obtenida")
+                        return {
+                            'classification': {
+                                'cardiovascular': json_result.get('cardiovascular', False),
+                                'hepatorenal': json_result.get('hepatorenal', False),
+                                'neurological': json_result.get('neurological', False),
+                                'oncological': json_result.get('oncological', False)
+                            },
+                            'confidence_score': float(json_result.get('confidence', 0.85)),
+                            'reasoning': json_result.get('reasoning', 'Análisis Gemini'),
+                            'request_number': self.request_count,
+                            'model_used': 'gemini-1.5-flash',
+                            'attempt': attempt + 1
+                        }
+                    else:
+                        print(f"⚠️ Intento {attempt + 1}: JSON inválido")
+                        if attempt < max_retries - 1:
+                            time.sleep(1)  # Esperar antes del siguiente intento
+
+                except Exception as e:
+                    print(f"❌ Error en intento {attempt + 1}: {e}")
+                    if attempt < max_retries - 1:
+                        time.sleep(2)  # Esperar más tiempo entre reintentos
+                    else:
+                        raise
+
+            # Si todos los intentos fallan, usar fallback inteligente
+            print("⚠️ Todos los intentos fallaron, usando análisis de fallback")
+            return self._intelligent_fallback(title, abstract)
+
+        except Exception as e:
+            print(f"❌ Error crítico en Gemini: {e}")
+            return self._intelligent_fallback(title, abstract)
+
+    def _extract_json_from_response(self, response_text: str) -> dict[str, Any]:
+        """Extraer y validar JSON de la respuesta de Gemini"""
+        try:
+            # Buscar JSON en la respuesta
+            start_idx = response_text.find('{')
+            end_idx = response_text.rfind('}') + 1
+
+            if start_idx == -1 or end_idx == -1:
+                raise ValueError("No se encontró JSON en la respuesta")
+
+            json_str = response_text[start_idx:end_idx]
+            result = json.loads(json_str)
+
+            # Validar estructura requerida
+            required_keys = ['cardiovascular', 'hepatorenal', 'neurological', 'oncological']
             if not all(key in result for key in required_keys):
-                raise ValueError("Respuesta de Gemini con formato incorrecto")
+                raise ValueError("JSON incompleto - faltan categorías")
 
-            # Validar dominios
-            valid_domains = [d for d in result['domains'] if d in self.medical_domains]
-            result['domains'] = valid_domains
+            # Validar tipos de datos
+            for key in required_keys:
+                if not isinstance(result[key], bool):
+                    result[key] = bool(result[key])  # Convertir a bool si es necesario
 
-            # Validar scores de confianza
-            for domain in self.medical_domains:
-                if domain not in result['confidence_scores']:
-                    result['confidence_scores'][domain] = 0.0
+            # Validar confianza
+            if 'confidence' in result:
+                confidence = float(result['confidence'])
+                if not 0.0 <= confidence <= 1.0:
+                    result['confidence'] = max(0.0, min(1.0, confidence))
+
+            return result
+
+        except (json.JSONDecodeError, ValueError, KeyError) as e:
+            print(f"❌ Error procesando JSON: {e}")
+            return None
+
+    def _intelligent_fallback(self, title: str, abstract: str) -> dict[str, Any]:
+        """Fallback inteligente cuando Gemini falla"""
+        print("🧠 Usando análisis de fallback inteligente...")
+
+        text_combined = f"{title} {abstract}".lower()
+
+        # Diccionarios de palabras clave más completos
+        keywords = {
+            'cardiovascular': [
+                'heart', 'cardiac', 'cardiovascular', 'cardio', 'myocardial', 'coronary',
+                'atherosclerosis', 'hypertension', 'arrhythmia', 'valve', 'aortic',
+                'ventricular', 'atrial', 'pericardial', 'endocardial', 'vascular'
+            ],
+            'hepatorenal': [
+                'kidney', 'renal', 'liver', 'hepatic', 'nephro', 'hepatorenal',
+                'cholecystitis', 'cirrhosis', 'dialysis', 'transplant', 'gallbladder',
+                'bile', 'creatinine', 'glomerular', 'hepatitis', 'jaundice'
+            ],
+            'neurological': [
+                'brain', 'neurological', 'neural', 'cerebral', 'neuron', 'dementia',
+                'alzheimer', 'parkinson', 'epilepsy', 'seizure', 'stroke', 'migraine',
+                'adrenoleukodystrophy', 'encephalitis', 'meningitis', 'cognitive'
+            ],
+            'oncological': [
+                'cancer', 'tumor', 'oncological', 'malignant', 'carcinoma', 'lymphoma',
+                'chemotherapy', 'radiation', 'metastasis', 'biopsy', 'oncology',
+                'neoplasm', 'leukemia', 'sarcoma', 'adenoma', 'melanoma'
+            ]
+        }
+
+        classification = {}
+        confidence_factors = []
+
+        # Análisis por categoría
+        for category, keyword_list in keywords.items():
+            matches = sum(1 for keyword in keyword_list if keyword in text_combined)
+            has_match = matches > 0
+            classification[category] = has_match
+
+            if has_match:
+                # Factor de confianza basado en número de coincidencias
+                confidence_factor = min(matches / len(keyword_list), 0.3)
+                confidence_factors.append(confidence_factor)
+
+        # Si no hay coincidencias, buscar términos médicos generales
+        if not any(classification.values()):
+            medical_terms = ['patient', 'treatment', 'diagnosis', 'clinical', 'medical', 'therapy']
+            if any(term in text_combined for term in medical_terms):
+                # Asignar categoría más probable basada en longitud del abstract
+                if len(abstract) > 500:
+                    classification['oncological'] = True  # Artículos largos suelen ser de oncología
                 else:
-                    score = result['confidence_scores'][domain]
-                    result['confidence_scores'][domain] = max(0.0, min(1.0, float(score)))
+                    classification['cardiovascular'] = True  # Por defecto
+                confidence_factors.append(0.1)
 
-            logger.info(f"Gemini classification successful: {valid_domains}")
-            return result
-
-        except Exception as e:
-            logger.error(f"Error en clasificación Gemini: {e}")
-            raise
-
-    def simulate_llm_response_enhanced(self, title: str, abstract: str) -> dict[str, Any]:
-        """Simulación mejorada de respuesta LLM cuando API no está disponible"""
-        text = f"{title} {abstract}".lower()
-
-        # Análisis heurístico basado en palabras clave
-        domain_scores = {
-            'cardiovascular': 0.0,
-            'neurological': 0.0,
-            'oncological': 0.0,
-            'hepatorenal': 0.0
-        }
-
-        # Palabras clave específicas para simulación
-        keyword_weights = {
-            'cardiovascular': {
-                'heart': 0.9, 'cardiac': 0.9, 'cardiovascular': 0.95, 'coronary': 0.8,
-                'myocardial': 0.85, 'artery': 0.7, 'blood pressure': 0.8, 'hypertension': 0.75,
-                'ecg': 0.7, 'stent': 0.8, 'valve': 0.75, 'angina': 0.8
-            },
-            'neurological': {
-                'brain': 0.9, 'neural': 0.85, 'neurological': 0.95, 'cognitive': 0.8,
-                'alzheimer': 0.9, 'parkinson': 0.9, 'stroke': 0.85, 'seizure': 0.8,
-                'epilepsy': 0.85, 'dementia': 0.85, 'mri': 0.7, 'eeg': 0.75
-            },
-            'oncological': {
-                'cancer': 0.95, 'tumor': 0.9, 'oncology': 0.95, 'chemotherapy': 0.9,
-                'radiation': 0.8, 'metastasis': 0.9, 'malignant': 0.85, 'carcinoma': 0.9,
-                'lymphoma': 0.9, 'leukemia': 0.9, 'biopsy': 0.8, 'therapeutic': 0.7
-            },
-            'hepatorenal': {
-                'liver': 0.9, 'kidney': 0.9, 'hepatic': 0.9, 'renal': 0.9,
-                'dialysis': 0.85, 'cirrhosis': 0.85, 'hepatitis': 0.85, 'transplant': 0.8,
-                'creatinine': 0.8, 'nephrology': 0.9, 'glomerular': 0.8, 'filtration': 0.75
-            }
-        }
-
-        found_terms = {}
-
-        # Calcular scores por dominio
-        for domain, keywords in keyword_weights.items():
-            domain_terms = []
-            total_weight = 0
-
-            for keyword, weight in keywords.items():
-                if keyword in text:
-                    domain_scores[domain] += weight
-                    total_weight += weight
-                    domain_terms.append(keyword)
-
-            # Normalizar score
-            if total_weight > 0:
-                domain_scores[domain] = min(domain_scores[domain] / len(keywords), 1.0)
-
-            found_terms[domain] = domain_terms
-
-        # Agregar algo de variabilidad realista
-        for domain in domain_scores:
-            noise = random.uniform(-0.05, 0.05)
-            domain_scores[domain] = max(0.0, min(1.0, domain_scores[domain] + noise))
-
-        # Determinar dominios predichos
-        threshold = 0.3
-        predicted_domains = [
-            domain for domain, score in domain_scores.items()
-            if score >= threshold
-        ]
-
-        # Si no hay predicciones, tomar la de mayor score
-        if not predicted_domains:
-            best_domain = max(domain_scores.items(), key=lambda x: x[1])
-            if best_domain[1] > 0.1:
-                predicted_domains = [best_domain[0]]
-
-        # Encontrar términos clave generales
-        all_terms = []
-        for domain_terms in found_terms.values():
-            all_terms.extend(domain_terms)
-        key_terms = list(set(all_terms))[:5]  # Top 5 términos únicos
-
-        # Generar explicación
-        if predicted_domains:
-            reasoning = f"Clasificado como {', '.join(predicted_domains)} basado en términos médicos específicos encontrados."
+        # Calcular confianza final
+        if confidence_factors:
+            base_confidence = sum(confidence_factors)
+            final_confidence = min(0.95, max(0.6, base_confidence))
         else:
-            reasoning = "No se encontraron términos médicos específicos suficientes para una clasificación confiable."
+            final_confidence = 0.5
 
         return {
-            'domains': predicted_domains,
-            'confidence_scores': domain_scores,
-            'reasoning': reasoning,
-            'key_terms': key_terms,
-            'simulation_mode': True
+            'classification': classification,
+            'confidence_score': round(final_confidence, 3),
+            'reasoning': f"Análisis de fallback: {sum(classification.values())} categorías identificadas",
+            'request_number': self.request_count,
+            'model_used': 'intelligent_fallback',
+            'matches_found': sum(classification.values())
         }
 
-    async def classify_complex_case(self, title: str, abstract: str, **kwargs) -> dict[str, Any]:
-        """Clasificar caso complejo usando LLM"""
-        start_time = time.time()
+    def _classify_simulated(self, title: str, abstract: str) -> dict[str, Any]:
+        """Clasificación simulada básica (último recurso)"""
+        import random
 
-        try:
-            if self.api_available:
-                result = await self.classify_with_gemini(title, abstract)
-            else:
-                logger.info("Usando simulación LLM (API no disponible)")
-                result = self.simulate_llm_response_enhanced(title, abstract)
+        text_combined = f"{title} {abstract}".lower()
 
-            processing_time = time.time() - start_time
+        classification = {
+            'cardiovascular': 'heart' in text_combined or 'cardiac' in text_combined,
+            'hepatorenal': 'kidney' in text_combined or 'liver' in text_combined,
+            'neurological': 'brain' in text_combined or 'neural' in text_combined,
+            'oncological': 'cancer' in text_combined or 'tumor' in text_combined
+        }
 
-            # Agregar metadatos
-            result['metadata'] = {
-                'processing_time': processing_time,
-                'method': 'gemini' if self.api_available else 'simulation',
-                'model_name': self.model_name,
-                'api_available': self.api_available,
-                'text_length': len(f"{title} {abstract}")
-            }
+        # Si no hay coincidencias, asignar aleatoriamente
+        if not any(classification.values()):
+            random_category = random.choice(self.label_names)
+            classification[random_category] = True
 
-            logger.info(f"LLM classification completed in {processing_time:.3f}s")
-            return result
-
-        except Exception as e:
-            logger.error(f"Error en clasificación LLM: {e}")
-            # Fallback a simulación en caso de error
-            fallback_result = self.simulate_llm_response_enhanced(title, abstract)
-            fallback_result['metadata'] = {
-                'processing_time': time.time() - start_time,
-                'method': 'fallback_simulation',
-                'error': str(e),
-                'api_available': False
-            }
-            return fallback_result
-
-    async def batch_classify(self, articles: list[dict[str, str]]) -> list[dict[str, Any]]:
-        """Clasificación en lote asíncrona"""
-        logger.info(f"Iniciando clasificación LLM en lote: {len(articles)} artículos")
-
-        # Limitar concurrencia para evitar rate limits
-        semaphore = asyncio.Semaphore(3)
-
-        async def classify_with_semaphore(article):
-            async with semaphore:
-                return await self.classify_complex_case(
-                    article.get('title', ''),
-                    article.get('abstract', '')
-                )
-
-        tasks = [classify_with_semaphore(article) for article in articles]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        # Procesar resultados y manejar excepciones
-        processed_results = []
-        for i, result in enumerate(results):
-            if isinstance(result, Exception):
-                logger.error(f"Error en artículo {i}: {result}")
-                # Resultado fallback
-                fallback = self.simulate_llm_response_enhanced(
-                    articles[i].get('title', ''),
-                    articles[i].get('abstract', '')
-                )
-                fallback['metadata']['error'] = str(result)
-                processed_results.append(fallback)
-            else:
-                processed_results.append(result)
-
-        logger.info(f"Clasificación LLM en lote completada: {len(processed_results)} resultados")
-        return processed_results
-
-    def get_service_info(self) -> dict[str, Any]:
-        """Información del servicio LLM"""
         return {
-            'model_name': self.model_name,
-            'api_available': self.api_available,
-            'domains': self.medical_domains,
-            'service_status': 'active' if self.api_available else 'simulation_mode'
+            'classification': classification,
+            'confidence_score': random.uniform(0.6, 0.8),
+            'reasoning': "Análisis simulado por palabras clave básicas",
+            'request_number': self.request_count,
+            'model_used': 'basic_simulation'
         }
+
+    def _default_prediction(self):
+        """Predicción por defecto cuando se alcanza el límite"""
+        return {
+            'classification': {label: False for label in self.label_names},
+            'confidence_score': 0.5,
+            'reasoning': f"Límite de {self.max_requests} peticiones alcanzado",
+            'request_number': self.request_count,
+            'model_used': 'default_limit'
+        }
+
+    def get_usage_stats(self) -> dict[str, Any]:
+        """Estadísticas de uso del LLM"""
+        return {
+            'mode': self.mode,
+            'total_requests': self.request_count,
+            'max_requests': self.max_requests,
+            'remaining_requests': max(0, self.max_requests - self.request_count),
+            'api_configured': self.api_key is not None,
+            'model_name': 'gemini-1.5-flash' if self.mode == 'real' else 'simulated'
+        }
+
+    def reset_usage(self):
+        """Reiniciar contador de peticiones"""
+        self.request_count = 0
+        print("🔄 Contador de peticiones reiniciado")
